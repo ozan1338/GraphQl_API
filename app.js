@@ -2,8 +2,10 @@ const express = require("express")
 const { graphqlHTTP } = require("express-graphql");
 const { buildSchema } = require('graphql')
 const mongoose = require("mongoose")
+const bcrypt = require('bcrypt')
 
 const Event = require('./models/event')
+const User = require("./models/user")
 
 
 const app = express()
@@ -19,6 +21,13 @@ app.use('/graphql', graphqlHTTP({
             description: String!
             price: Float!
             date: String!
+            creator: String!
+        }
+
+        type User {
+            _id: ID!
+            email: String!
+            password: String
         }
 
         input EventInput {
@@ -28,12 +37,18 @@ app.use('/graphql', graphqlHTTP({
             date: String
         }
 
+        input UserInput {
+            email: String!
+            password: String!
+        }
+
         type RootQuery {
             events: [Event!]!
         }
 
         type RootMutation {
             createEvent(eventInput: EventInput): Event
+            createUser(userInput: UserInput): User
         }
         
         schema {
@@ -45,9 +60,13 @@ app.use('/graphql', graphqlHTTP({
         events: async () => {
             try {
                 const result = await Event.find()
-                return result.map(event => {
-                    return {...event._doc}
+
+                const populatedCreator = result.map(async event => {
+                    const user = await User.findById(event.creator)
+                    return {...event._doc, creator: user.email}
                 })
+
+                return populatedCreator
             } catch (error) {
                 console.log(error)
                 throw error
@@ -56,17 +75,54 @@ app.use('/graphql', graphqlHTTP({
         },
         createEvent: async(args) => {
             try {
+                const user = await User.findById('6241864af83b79474b521f08')
+                
+                if(!user) {
+                    throw new Error('User not found')
+                }
+
                 const event = new Event({
                     title: args.eventInput.title,
                     description: args.eventInput.description,
                     price: args.eventInput.price,
-                    date: new Date().toISOString()
+                    date: new Date().toISOString(),
+                    creator: '6241864af83b79474b521f08'
                 })
                 const result = await event.save();
+                
+                user.createdEvents.push(event)
+                
+                await user.save()
+                
                 return {...result._doc}
             } catch (error) {
                 console.log(error)
-                throw err;
+                throw error;
+            }
+            
+        },
+        createUser: async args => {
+            try {
+                const isExist = await User.findOne({
+                    email: args.userInput.email
+                })
+
+                if (isExist) {
+                    throw new Error('User exist')
+                }
+
+                const hashPassword = await bcrypt.hash(args.userInput.password, 12)
+                const user = new User({
+                    email: args.userInput.email,
+                    password: hashPassword
+                });
+
+                const result = await user.save();
+
+                return {...result._doc, password: null}
+            } catch (error) {
+                console.log(error)
+                throw error;
             }
             
         }
